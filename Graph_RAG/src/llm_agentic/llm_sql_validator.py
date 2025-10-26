@@ -1,5 +1,5 @@
 """
-SQL Validator Module - Improved Version
+SQL Validator Module - Enhanced Version with Detailed Logging
 Uses LLM for validation with intelligent suggestions and self-correction loop
 """
 
@@ -9,13 +9,14 @@ from groq import Groq
 import os
 import json
 import re
+from colorama import Fore, Style
 
 logger = logging.getLogger(__name__)
 
 
 class LLMSQLValidator:
     """
-    Improved LLM-based SQL validator with intelligent suggestions
+    Enhanced LLM-based SQL validator with intelligent suggestions and detailed logging
     """
     
     def __init__(self, schema_context: Dict[str, Any], groq_api_key: Optional[str] = None):
@@ -62,8 +63,10 @@ class LLMSQLValidator:
         """
         Intelligent pre-validation that provides suggestions instead of blocking
         """
+        print(f"\n{Fore.CYAN}📝 Pre-validating query...{Style.RESET_ALL}")
         
         if not self.groq_client:
+            print(f"  {Fore.YELLOW}⚠ Validation skipped (no Groq API key){Style.RESET_ALL}")
             return {
                 'status': 'passed',
                 'suggestions': [],
@@ -119,19 +122,30 @@ Return ONLY a JSON object (no markdown):
             
             result = self._extract_json(response.choices[0].message.content)
             
+            status = 'passed' if result.get('validation_passed', True) else 'needs_attention'
+            suggestions = result.get('suggestions', [])
+            confidence = result.get('confidence_score', 80)
+            
+            if suggestions:
+                print(f"  {Fore.YELLOW}💡 {len(suggestions)} suggestion(s) generated{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}💡 {suggestions}" )
+            else:
+                print(f"  {Fore.GREEN}✓ No suggestions needed{Style.RESET_ALL}")
+            
             return {
-                'status': 'passed' if result.get('validation_passed', True) else 'needs_attention',
-                'suggestions': result.get('suggestions', []),
-                'confidence': result.get('confidence_score', 80)
+                'status': status,
+                'suggestions': suggestions,
+                'confidence': confidence
             }
             
         except Exception as e:
             logger.error(f"Pre-validation failed: {e}")
+            print(f"  {Fore.RED}✗ Pre-validation failed: {e}{Style.RESET_ALL}")
             return {'status': 'passed', 'suggestions': [], 'confidence': 100}
     
     async def validate_sql(self, generated_sql: str, original_query: str) -> Dict[str, Any]:
         """
-        Comprehensive SQL validation
+        Comprehensive SQL validation with detailed logging
         """
         
         if not self.groq_client:
@@ -207,7 +221,6 @@ Return ONLY a JSON object (no markdown):
                 'confidence': result.get('overall_confidence', 0),
                 'validations': result.get('validations', {}),
                 'issues': result.get('issues', [])
-                #'corrected_sql': result.get('corrected_sql')
             }
             
         except Exception as e:
@@ -226,16 +239,37 @@ Return ONLY a JSON object (no markdown):
         """
         Self-correction loop between OpenAI regeneration and Groq validation
         """
+        print(f"\n{Fore.CYAN}🔄 Starting self-correction loop (max {max_attempts} attempts)...{Style.RESET_ALL}")
         
         best_sql = sql
         best_validation = None
         attempt_history = []
         
         for attempt in range(max_attempts):
+            print(f"\n{Fore.BLUE}  Attempt {attempt + 1}/{max_attempts}:{Style.RESET_ALL}")
             logger.info(f"Self-correction attempt {attempt + 1}/{max_attempts}")
             
             # Validate current SQL
+            print(f"    Validating SQL...")
             validation = await self.validate_sql(best_sql, original_query)
+            
+            # Display validation scores
+            if validation.get('validations'):
+                for metric, score in validation['validations'].items():
+                    if score >= 80:
+                        color = Fore.GREEN
+                        symbol = "✓"
+                    elif score >= 60:
+                        color = Fore.YELLOW
+                        symbol = "⚠"
+                    else:
+                        color = Fore.RED
+                        symbol = "✗"
+                    print(f"      {color}{symbol} {metric}: {score}%{Style.RESET_ALL}")
+            
+            confidence = validation.get('confidence', 0)
+            print(f"    Overall confidence: {confidence}%")
+            
             attempt_history.append({
                 'attempt': attempt + 1,
                 'sql': best_sql,
@@ -243,7 +277,8 @@ Return ONLY a JSON object (no markdown):
             })
             
             # If valid with high confidence, we're done
-            if validation['valid'] and validation.get('confidence', 0) >= 80:
+            if validation['valid'] and confidence >= 80:
+                print(f"{Fore.GREEN}  ✓ SQL validated successfully!{Style.RESET_ALL}")
                 logger.info(f"SQL validated successfully on attempt {attempt + 1}")
                 return {
                     'success': True,
@@ -257,19 +292,17 @@ Return ONLY a JSON object (no markdown):
             if not best_validation or validation.get('confidence', 0) > best_validation.get('confidence', 0):
                 best_validation = validation
             
-            # Try to improve the SQL
-            # if validation.get('corrected_sql'):
-            #     # Groq provided a correction
-            #     logger.info("Using Groq's corrected SQL")
-            #     best_sql = validation['corrected_sql']
-            #     #continue  
-            # Re-validate the corrected SQL in next iteration
-            
             # If we're not on the last attempt and SQL is invalid, regenerate with OpenAI
             if attempt < max_attempts - 1 and not validation['valid']:
+                print(f"{Fore.YELLOW}    Issues found, requesting regeneration...{Style.RESET_ALL}")
                 logger.info("Asking OpenAI to regenerate based on issues")
                 
                 # Format issues for regeneration
+                if validation.get('issues'):
+                    print(f"    Issues to fix:")
+                    for issue in validation['issues'][:3]:  # Show first 3 issues
+                        print(f"      - {issue['category']}: {issue['description']}")
+                
                 issues_text = "\n".join([
                     f"- {issue['category']}: {issue['description']} (Fix: {issue.get('fix', 'N/A')})"
                     for issue in validation.get('issues', [])
@@ -295,9 +328,11 @@ Return ONLY a JSON object (no markdown):
                 )
                 
                 best_sql = new_sql
+                print(f"    Regenerated SQL based on validation feedback")
                 logger.info("OpenAI regenerated SQL based on validation feedback")
         
         # Max attempts reached
+        print(f"\n{Fore.YELLOW}  Max attempts reached. Using best available SQL.{Style.RESET_ALL}")
         return {
             'success': best_validation and best_validation['valid'],
             'final_sql': best_sql,

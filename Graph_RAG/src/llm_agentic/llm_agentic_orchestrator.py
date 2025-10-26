@@ -1,12 +1,13 @@
 """
-LLM Agentic Orchestrator - Improved Version
-Intelligent validation with suggestions instead of blocking
+LLM Agentic Orchestrator - Enhanced Version
+Includes query history similarity checking
 """
 
 import logging
 import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from colorama import Fore, Style
 from .llm_interface import AgenticLLMInterface
 from .llm_task_decomposer import LLMTaskDecomposer
 from .llm_sql_synthesizer import LLMSQLSynthesizer
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class LLMAgenticOrchestratorImproved:
     """
-    Improved orchestrator with intelligent validation
+    Enhanced orchestrator with query history checking and intelligent validation
     """
     
     def __init__(self, rag_system=None, 
@@ -50,7 +51,7 @@ class LLMAgenticOrchestratorImproved:
     
     async def process_query(self, query: str, auto_approve_suggestions: bool = True) -> Dict[str, Any]:
         """
-        Process query with intelligent validation
+        Process query with query history checking and intelligent validation
         
         Args:
             query: User's query
@@ -64,6 +65,33 @@ class LLMAgenticOrchestratorImproved:
         start_time = datetime.now()
         
         try:
+            # Step 1: Check query history for similar queries
+            similar_query = await self._check_query_history(query)
+            
+            if similar_query:
+                logger.info(f"Found similar query with {similar_query['similarity_score']:.2%} match")
+                
+                # Ask LLM if the historical SQL can be reused
+                can_reuse = await self._verify_sql_reuse(query, similar_query)
+                
+                if can_reuse['can_reuse']:
+                    logger.info("Reusing SQL from query history")
+                    return {
+                        'success': True,
+                        'query': query,
+                        'query_type': 'cached',
+                        'sql': similar_query['sql_query'],
+                        'validation': similar_query.get('validation_result', {}),
+                        'validation_confidence': 100,
+                        'from_cache': True,
+                        'cache_query_id': similar_query['query_id'],
+                        'similarity_score': similar_query['similarity_score'],
+                        'message': f'Used cached SQL from similar query (ID: {similar_query["query_id"]})'
+                    }
+                else:
+                    logger.info("Similar query found but SQL needs regeneration")
+            
+            # Step 2: Continue with regular processing
             # Get RAG context
             context = self._get_rag_context(query)
             
@@ -100,7 +128,30 @@ class LLMAgenticOrchestratorImproved:
                     enhanced_query, query, context, suggestions
                 )
             
-            # Add to history
+            # Step 3: Add successful query to history
+            if result['success'] and self.rag_system:
+                overall_confidence = result.get('validation_confidence', 100)
+                
+                # Only add if confidence > 90%
+                if overall_confidence > 90:
+                    print(f"\n{Fore.CYAN}💾 Saving to query history...{Style.RESET_ALL}")
+                    
+                    validation_result = {
+                        'schema': result.get('validation', {}).get('schema', 100),
+                        'syntax': result.get('validation', {}).get('syntax', 100),
+                        'semantic': result.get('validation', {}).get('semantic', 100),
+                        'completeness': result.get('validation', {}).get('completeness', 100)
+                    }
+                    
+                    self.rag_system.add_validated_query_to_history(
+                        nl_query=query,
+                        sql_query=result['sql'],
+                        validation_result=validation_result,
+                        overall_confidence=overall_confidence,
+                        variations=[]
+                    )
+            
+            # Add to local history
             self.query_history.append(result)
             return result
             
@@ -113,10 +164,88 @@ class LLMAgenticOrchestratorImproved:
                 'execution_time': (datetime.now() - start_time).total_seconds()
             }
     
+    async def _check_query_history(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if a similar query exists in history
+        """
+        if not self.rag_system:
+            return None
+        
+        try:
+            # Look for similar queries with 90% threshold
+            similar = self.rag_system.find_similar_query_enhanced(query, threshold=0.90)
+            return similar
+        except Exception as e:
+            logger.error(f"Query history check failed: {e}")
+            return None
+    
+    async def _verify_sql_reuse(self, current_query: str, similar_query: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ask LLM if the historical SQL can be reused for current query
+        """
+        print(f"\n{Fore.CYAN}🤔 Verifying if cached SQL can be reused...{Style.RESET_ALL}")
+        print(f"  Original: '{similar_query['natural_language'][:60]}...'")
+        print(f"  Current:  '{current_query[:60]}...'")
+        
+        prompt = f"""
+        Determine if an existing SQL query can be reused for a new request.
+        
+        ORIGINAL QUERY: {similar_query['natural_language']}
+        ORIGINAL SQL: {similar_query['sql_query']}
+        
+        NEW QUERY: {current_query}
+        
+        Analyze if the SQL can be reused as-is or needs modification.
+        Consider:
+        1. Are the entities (tables, columns) the same?
+        2. Are the filters/conditions equivalent?
+        3. Is the aggregation/grouping the same?
+        4. Is the time period the same or compatible?
+        
+        Return JSON:
+        {{
+            "can_reuse": true/false,
+            "reason": "explanation",
+            "confidence": 0-100
+        }}
+        """
+        
+        try:
+            response = await self.llm_interface.analyze_query_similarity(prompt)
+            
+            # Parse response
+            if isinstance(response, dict):
+                can_reuse = response.get('can_reuse', False)
+                reason = response.get('reason', '')
+                confidence = response.get('confidence', 0)
+                
+                if can_reuse:
+                    print(f"{Fore.GREEN}  ✓ SQL can be reused (confidence: {confidence}%){Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}  ✗ SQL needs regeneration: {reason}{Style.RESET_ALL}")
+                
+                return response
+            else:
+                # Default to not reusing if parsing fails
+                print(f"{Fore.YELLOW}  ✗ Unable to verify similarity{Style.RESET_ALL}")
+                return {
+                    "can_reuse": False,
+                    "reason": "Unable to determine similarity",
+                    "confidence": 0
+                }
+        except Exception as e:
+            logger.error(f"SQL reuse verification failed: {e}")
+            print(f"{Fore.RED}  ✗ Verification failed: {e}{Style.RESET_ALL}")
+            return {
+                "can_reuse": False,
+                "reason": str(e),
+                "confidence": 0
+            }
+    
     async def _process_simple_with_validation(self, enhanced_query: str, original_query: str,
                                              context: Dict[str, Any], suggestions: List) -> Dict[str, Any]:
         """Process simple query with validation loop"""
-        
+        print("Process Simple Query...")
         schema_context = self._format_schema_context(context)
         
         # Generate SQL
@@ -146,13 +275,14 @@ class LLMAgenticOrchestratorImproved:
             'validation': validation.get('validations', {}),
             'validation_confidence': validation.get('confidence', 100),
             'correction_attempts': attempts,
+            'from_cache': False,
             'message': f'Generated SQL with {attempts} validation attempt(s)'
         }
     
     async def _process_complex_with_validation(self, enhanced_query: str, original_query: str,
                                               context: Dict[str, Any], suggestions: List) -> Dict[str, Any]:
         """Process complex query with validation"""
-        
+        print("Process Complex Query...")
         # Decompose
         plan = await self.decomposer.decompose_query(enhanced_query)
         
@@ -196,6 +326,7 @@ class LLMAgenticOrchestratorImproved:
             'validation': validation.get('validations', {}),
             'validation_confidence': validation.get('confidence', 100),
             'correction_attempts': attempts,
+            'from_cache': False,
             'message': f'Generated complex SQL with {len(sql_queries)} tasks and {attempts} validation attempt(s)'
         }
     

@@ -163,9 +163,9 @@ async def main():
     
     # Initialize RAG system
     rag_system = RAGSystem(
-        data_dict_path="./data/data_dictionary.json",
-        relationships_path="./data/relationships.json", 
-        query_history_path="./data/query_history.json",
+        data_dict_path="./Graph_RAG/data/data_dictionary.json",
+        relationships_path="./Graph_RAG/data/relationships.json", 
+        query_history_path="./Graph_RAG/data/query_history.json",
         use_sample_values=True
     )
     
