@@ -162,20 +162,6 @@
       "last_used": "2025-01-13T14:15:00.000000"
     },
     {
-      "id": "q_009",
-      "natural_language": "Get profit figures for banks in 2024",
-      "variations": [],
-      "sql_query": "SELECT \n    b.BANK_ID,\n    b.BANK_NAME,\n    SUM(fp.YTD_INCOME) AS TOTAL_YTD_INCOME\nFROM \n    FINANCIAL_PERFORMANCE fp\nJOIN \n    BANKS b ON fp.BANK_ID = b.BANK_ID\nWHERE \n    fp.YEAR = 2024\nGROUP BY \n    b.BANK_ID, b.BANK_NAME\nORDER BY \n    TOTAL_YTD_INCOME DESC;\n",
-      "validation_result": {
-        "schema": 100,
-        "syntax": 100,
-        "semantic": 100,
-        "completeness": 100
-      },
-      "overall_confidence": 100,
-      "last_used": "2025-10-26T15:45:22.946100"
-    },
-    {
       "id": "q_010",
       "natural_language": "Show net profit for all banks in 2024",
       "variations": [],
@@ -188,6 +174,90 @@
       },
       "overall_confidence": 100,
       "last_used": "2025-10-26T15:47:08.542191"
+    },
+    {
+      "id": "q_011",
+      "natural_language": "Market capitalization comparison for Q4 2024",
+      "variations": [],
+      "sql_query": "WITH CET1_data AS (\n    SELECT \n        BANK_ID,\n        SUM(CASE WHEN YEAR = 2024 AND QUARTER = 4 THEN CET1 ELSE 0 END) AS total_CET1_Q4_2024,\n        SUM(CASE WHEN YEAR = 2023 AND QUARTER = 4 THEN CET1 ELSE 0 END) AS total_CET1_Q4_2023\n    FROM \n        MARKET_DATA\n    WHERE \n        (YEAR = 2024 AND QUARTER = 4) OR (YEAR = 2023 AND QUARTER = 4)\n    GROUP BY \n        BANK_ID\n)\nSELECT \n    B.BANK_NAME,\n    COALESCE(CD.total_CET1_Q4_2024, 0) AS total_CET1_Q4_2024,\n    COALESCE(CD.total_CET1_Q4_2023, 0) AS total_CET1_Q4_2023\nFROM \n    BANKS B\nLEFT JOIN \n    CET1_data CD ON B.BANK_ID = CD.BANK_ID\nORDER BY \n    total_CET1_Q4_2024 DESC;\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 100,
+        "completeness": 100
+      },
+      "overall_confidence": 100,
+      "last_used": "2025-10-26T17:40:23.384806"
+    },
+    {
+      "id": "q_012",
+      "natural_language": "Growth analysis - YoY profit growth for 2024 vs 2023",
+      "variations": [],
+      "sql_query": "SELECT \n    (SUM(CASE WHEN YEAR = 2024 THEN YTD_INCOME END) - \n     SUM(CASE WHEN YEAR = 2023 THEN YTD_INCOME END)) / \n     NULLIF(SUM(CASE WHEN YEAR = 2023 THEN YTD_INCOME END), 0) AS YoY_Profit_Growth\nFROM \n    FINANCIAL_PERFORMANCE\nWHERE \n    YEAR IN (2023, 2024);\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 100,
+        "completeness": 100
+      },
+      "overall_confidence": 100,
+      "last_used": "2025-10-26T17:43:03.285564"
+    },
+    {
+      "id": "q_013",
+      "natural_language": "Quarterly trend analysis for ENBD",
+      "variations": [],
+      "sql_query": "SELECT \n    fp.YEAR,\n    fp.QUARTER,\n    SUM(fp.YTD_INCOME) AS TOTAL_YTD_INCOME,\n    LAG(SUM(fp.YTD_INCOME)) OVER (PARTITION BY fp.BANK_ID ORDER BY fp.YEAR, fp.QUARTER) AS PREVIOUS_QUARTER_INCOME,\n    SUM(fp.YTD_INCOME) - LAG(SUM(fp.YTD_INCOME)) OVER (PARTITION BY fp.BANK_ID ORDER BY fp.YEAR, fp.QUARTER) AS QUARTER_OVER_QUARTER_CHANGE\nFROM \n    FINANCIAL_PERFORMANCE fp\nJOIN \n    BANKS b ON fp.BANK_ID = b.BANK_ID\nWHERE \n    (b.BANK_NAME = 'ENBD' OR b.BANK_CODE = 'ENBD')\n    AND b.BANK_NAME IS NOT NULL\n    AND b.BANK_CODE IS NOT NULL\nGROUP BY \n    fp.YEAR, fp.QUARTER, fp.BANK_ID\nORDER BY \n    fp.YEAR, fp.QUARTER;\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 90,
+        "completeness": 90
+      },
+      "overall_confidence": 95,
+      "last_used": "2025-10-26T18:12:21.789843"
+    },
+    {
+      "id": "q_014",
+      "natural_language": "Market capitalization comparison for Q4 2024 for all banks",
+      "variations": [],
+      "sql_query": "SELECT \n    b.BANK_ID,\n    b.BANK_NAME,\n    md.CET1,\n    RANK() OVER (ORDER BY md.CET1 DESC) AS CET1_RANK\nFROM \n    MARKET_DATA md\nJOIN \n    BANKS b ON md.BANK_ID = b.BANK_ID\nWHERE \n    md.YEAR = 2024 \n    AND md.QUARTER = 4\nORDER BY \n    md.CET1 DESC;\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 100,
+        "completeness": 100
+      },
+      "overall_confidence": 100,
+      "last_used": "2025-10-26T18:17:46.951470"
+    },
+    {
+      "id": "q_015",
+      "natural_language": "ompare NIM trends across banks for 2023-2024",
+      "variations": [],
+      "sql_query": "WITH FilteredPerformance AS (\n    SELECT BANK_ID, YEAR, QUARTER, YTD_INCOME \n    FROM FINANCIAL_PERFORMANCE \n    WHERE YEAR IN (2023, 2024)\n),\nFilteredMarketData AS (\n    SELECT BANK_ID, YEAR, QUARTER, CET1 \n    FROM MARKET_DATA \n    WHERE YEAR IN (2023, 2024)\n),\nJoinedData AS (\n    SELECT FP.BANK_ID, B.BANK_NAME, FP.YEAR, FP.QUARTER, FP.YTD_INCOME, MD.CET1 \n    FROM FilteredPerformance FP \n    JOIN BANKS B ON FP.BANK_ID = B.BANK_ID\n    JOIN FilteredMarketData MD ON FP.BANK_ID = MD.BANK_ID AND FP.YEAR = MD.YEAR AND FP.QUARTER = MD.QUARTER\n)\nSELECT BANK_ID, BANK_NAME, YEAR, QUARTER, \n       (YTD_INCOME / CET1) AS NIM \nFROM JoinedData \nORDER BY BANK_ID, YEAR, QUARTER;\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 90,
+        "completeness": 90
+      },
+      "overall_confidence": 95,
+      "last_used": "2025-10-26T18:23:04.363101"
+    },
+    {
+      "id": "q_016",
+      "natural_language": "Annual earnings for all banks in 2024",
+      "variations": [],
+      "sql_query": "SELECT B.BANK_NAME, SUM(FP.YTD_INCOME) AS ANNUAL_EARNINGS \nFROM BANKS B \nJOIN FINANCIAL_PERFORMANCE FP ON B.BANK_ID = FP.BANK_ID \nWHERE FP.YEAR = 2024 \nGROUP BY B.BANK_NAME;\n",
+      "validation_result": {
+        "schema": 100,
+        "syntax": 100,
+        "semantic": 100,
+        "completeness": 100
+      },
+      "overall_confidence": 100,
+      "last_used": "2025-10-26T18:23:34.119140"
     }
   ]
 }

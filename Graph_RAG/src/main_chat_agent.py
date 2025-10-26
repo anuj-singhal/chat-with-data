@@ -15,7 +15,8 @@ init()
 # Import components
 from rag_agent.rag_system import RAGSystem
 from llm_agentic.llm_agentic_orchestrator import LLMAgenticOrchestratorImproved
-
+from sql_executor_agent.mcp_client import mcp_client
+from sql_executor_agent.query_executor import query_executor
 
 class SQLChatAgent:
     """Interactive chat agent for SQL generation with query history"""
@@ -223,7 +224,39 @@ class SQLChatAgent:
                         'result': result,
                         'timestamp': datetime.now()
                     })
-            
+
+                # In main_chat_agent.py, after SQL generation:
+                if result['success']:
+                    # Display generated SQL...
+                    # result['sql']
+                    # Ask user if they want to execute
+                    while True:
+                        try:
+                            user_confirmation = input(f"{Fore.GREEN}You wanted ot execute the query(Y/N or Yes/No): {Style.RESET_ALL}").strip()
+                            if (user_confirmation.lower() == 'y' or user_confirmation.lower() == 'yes'):
+                                # Connect if needed
+                                if not mcp_client.connected:
+                                    await mcp_client.connect()
+                                
+                                # Execute
+                                exec_result = await query_executor.execute_query(result['sql'])
+                                # Display results
+                                
+                                print(exec_result)
+                                break
+                            elif user_input.lower() == 'exit':
+                                print(f"{Fore.YELLOW}Goodbye!{Style.RESET_ALL}")
+                                break
+                            else:
+                                print("Please type Y/Yes or N/No only")
+
+                        except KeyboardInterrupt:
+                            print(f"\n{Fore.YELLOW}Interrupted. Type 'exit' to quit.{Style.RESET_ALL}")
+                            break
+                        except Exception as e:
+                            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+                            break
+                
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}Interrupted. Type 'exit' to quit.{Style.RESET_ALL}")
             except Exception as e:
